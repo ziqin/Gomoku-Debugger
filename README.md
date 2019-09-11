@@ -1,4 +1,4 @@
-# Gomoku Desktop Debuger
+# Gomoku Desktop Debugger
 
 ## Introduction
 
