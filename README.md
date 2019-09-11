@@ -11,7 +11,7 @@ Currently it is poorly-implemented, feature-incomplete, and probably bug-rich.
 ## Installation
 
 ``` sh
-git clone https://github.com/ziqin/Gomoku-Debuger.git
+git clone https://github.com/ziqin/Gomoku-Debugger.git
 cd Gomoku-Debuger
 pip install -r requirements.txt
 ```
