@@ -2,44 +2,35 @@
 
 import logging
 import numpy as np
-import os
 import sys
-import time
+from enum import Enum
 from gomoku import AI
-from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QRadioButton,
-                             QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout)
-from PyQt5.QtGui import QFont
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer
+from PyQt5.QtCore import pyqtSignal, QTimer
+from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QRadioButton, QMessageBox,
+                             QGroupBox, QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
 
 
-class ChessPiece(QPushButton):
+class Color(Enum):
     BLACK = 1
     WHITE = -1
 
+
+class ChessPiece(QPushButton):
     def __init__(self, row, col, size=32):
         super().__init__()
-        self.row = row
-        self.col = col
+        self.coordinate = (row, col)
+        self.color = None
         self.setFixedWidth(size)
         self.setFixedHeight(size)
-        self.color = None
 
-    def drop(self, color):
-        if self.color is not None:
-            return
-        half_size = self.width() / 2
-        if color == ChessPiece.BLACK:
-            self.setStyleSheet(f'background-color: black; border-radius: {half_size}px;')
-            self.color = color
-            logging.info(f'BLACK ({self.row}, {self.col})')
-        elif color == ChessPiece.WHITE:
-            self.setStyleSheet(f'background-color: white; border-radius: {half_size}px;')
-            self.color = color
-            logging.info(f'WHITE ({self.row}, {self.col})')
-        else:
-            raise ValueError('Invalid color')
+    def drop(self, color: Color):
+        assert self.color is None
+        assert color in {Color.BLACK, Color.WHITE}
+        self.color = color
+        self.setStyleSheet(f'background-color: {color.name.lower()}; border-radius: {self.width()/2}px;')
+        logging.info(f'{color.name} {self.coordinate}')
 
-    def reset(self):
+    def clear(self):
         self.color = None
         self.setStyleSheet('')
 
@@ -55,7 +46,6 @@ class MainWindow(QWidget):
         self.choose_white = QRadioButton('White')
         self.choose_black.setChecked(True)
         self.choose_black.toggled.connect(self.refresh_board)
-        # self.choose_white.clicked.connect(self.refresh_board)
 
         input_layout = QHBoxLayout()
         input_layout.addWidget(self.choose_black)
@@ -67,6 +57,7 @@ class MainWindow(QWidget):
         layout = QVBoxLayout()
         layout.addWidget(input_group)
         layout.addLayout(self.chessboard_panel)
+        layout.setSizeConstraint(QLayout.SetFixedSize)
         self.setLayout(layout)
 
         self.trigger_ai.connect(self.ai_play)
@@ -86,36 +77,38 @@ class MainWindow(QWidget):
     def refresh_board(self):
         logging.warning('Refreshing chessboard')
         if self.choose_white.isChecked():
-            self.human_color = ChessPiece.WHITE
-            logging.info('Your chess color: white')
+            self.human_color = Color.WHITE
         else:
-            self.human_color = ChessPiece.BLACK
-            logging.info('Your chess color: black')
+            self.human_color = Color.BLACK
+        logging.info(f'Your chess color: {self.human_color}')
         self._init_game()
 
     def _init_game(self):
-        self.ai = AI(self.chessboard_size, -self.human_color, 5)  # -human_color: AI color
+        self.ai = AI(self.chessboard_size, -self.human_color.value, 5)  # -human_color.value: AI color
         self.chessboard = np.zeros((self.chessboard_size, self.chessboard_size))
 
         # clean chessboard
         for row in self.chessboard_pos:
             for piece in row:
                 if piece.color is not None:
-                    piece.reset()
+                    piece.clear()
 
-        if self.human_color == ChessPiece.WHITE:
+        if self.human_color == Color.WHITE:
             self.trigger_ai.emit()
 
-    def human_play(self, piece):
-        piece.drop(self.human_color)
-        QTimer.singleShot(1, lambda: self.trigger_ai.emit())
+    def human_play(self, piece: ChessPiece):
+        if piece.color is None:
+            piece.drop(self.human_color)
+            QTimer.singleShot(1, lambda: self.trigger_ai.emit())  # hack: emit after updating piece color
+        else:
+            QMessageBox.warning(self, 'Invalid Position', 'This position has been taken!')
 
     def ai_play(self):
         self.chessboard_panel.setEnabled(False)
         self.ai.go(self.chessboard)
         # time.sleep(1)
         new_row, new_col = self.ai.candidate_list[-1]
-        self.chessboard_pos[new_row][new_col].drop(-self.human_color)
+        self.chessboard_pos[new_row][new_col].drop(Color(-self.human_color.value))
         self.chessboard_panel.setEnabled(True)
 
 
@@ -123,8 +116,6 @@ def main():
     logging.basicConfig(level=logging.INFO, format='[%(asctime)s %(levelname)s] %(message)s')
     app = QApplication(sys.argv)
     app.setApplicationName('Gomoku Desktop')
-    if os.name == 'nt':
-        app.setFont(QFont('Segoe UI'))
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
