@@ -5,9 +5,10 @@ import numpy as np
 import sys
 from enum import Enum
 from gomoku import AI
-from PyQt5.QtCore import pyqtSignal, QTimer
-from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QRadioButton, QMessageBox,
+from PyQt5.QtCore import pyqtSignal, QEventLoop, QCoreApplication, QTimer
+from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QMessageBox,
                              QGroupBox, QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
+from typing import Optional
 
 
 class Color(Enum):
@@ -16,7 +17,7 @@ class Color(Enum):
 
 
 class ChessPiece(QPushButton):
-    def __init__(self, row, col, size=32):
+    def __init__(self, row: int, col: int, size=32):
         super().__init__()
         self.coordinate = (row, col)
         self.color = None
@@ -29,93 +30,148 @@ class ChessPiece(QPushButton):
         self.color = color
         self.setStyleSheet(f'background-color: {color.name.lower()}; border-radius: {self.width()/2}px;')
         logging.info(f'{color.name} {self.coordinate}')
+        QCoreApplication.processEvents()  # refresh ui immediately
 
     def clear(self):
         self.color = None
         self.setStyleSheet('')
 
 
-class MainWindow(QWidget):
-    trigger_ai = pyqtSignal()
+class ChessBoard(QWidget):
+    dropped = pyqtSignal(int, int)
 
-    def __init__(self, size=16, parent=None):
+    def __init__(self, data: np.ndarray, parent=None):
         super(QWidget, self).__init__(parent=parent)
-        self.chessboard_size = size
-
-        self.choose_black = QRadioButton('Black')
-        self.choose_white = QRadioButton('White')
-        self.choose_black.setChecked(True)
-        self.choose_black.toggled.connect(self.refresh_board)
-
-        input_layout = QHBoxLayout()
-        input_layout.addWidget(self.choose_black)
-        input_layout.addWidget(self.choose_white)
-        input_group = QGroupBox('Your color')
-        input_group.setLayout(input_layout)
-
-        self.chessboard_panel = self._init_chessboard_panel()
-        layout = QVBoxLayout()
-        layout.addWidget(input_group)
-        layout.addLayout(self.chessboard_panel)
-        layout.setSizeConstraint(QLayout.SetFixedSize)
+        self.data = data
+        row, col = data.shape
+        self.pieces = np.empty(data.shape, dtype=object)
+        layout = QGridLayout()
+        for r in range(row):
+            for c in range(col):
+                this = self.pieces[r, c] = ChessPiece(r, c)
+                this.clicked.connect(lambda: self._on_click(self.sender()))
+                layout.addWidget(this, r, c)
         self.setLayout(layout)
+        layout.setSizeConstraint(QLayout.SetFixedSize)
 
-        self.trigger_ai.connect(self.ai_play)
-        self.refresh_board()
+    def place(self, coordinate: (int, int), color: Color):
+        self.pieces[coordinate].drop(color)
 
-    def _init_chessboard_panel(self):
-        size = self.chessboard_size
-        self.chessboard_pos = [[ChessPiece(row, col) for col in range(size)] for row in range(size)]
-        board_layout = QGridLayout()
-        for row in range(size):
-            for col in range(size):
-                this = self.chessboard_pos[row][col]
-                this.clicked.connect(lambda: self.human_play(self.sender()))
-                board_layout.addWidget(this, row, col)
-        return board_layout
-
-    def refresh_board(self):
-        logging.warning('Refreshing chessboard')
-        if self.choose_white.isChecked():
-            self.human_color = Color.WHITE
-        else:
-            self.human_color = Color.BLACK
-        logging.info(f'Your chess color: {self.human_color}')
-        self._init_game()
-
-    def _init_game(self):
-        self.ai = AI(self.chessboard_size, -self.human_color.value, 5)  # -human_color.value: AI color
-        self.chessboard = np.zeros((self.chessboard_size, self.chessboard_size))
-
-        # clean chessboard
-        for row in self.chessboard_pos:
-            for piece in row:
-                if piece.color is not None:
-                    piece.clear()
-
-        if self.human_color == Color.WHITE:
-            self.trigger_ai.emit()
-
-    def human_play(self, piece: ChessPiece):
+    def _on_click(self, piece: ChessPiece):
         if piece.color is None:
-            piece.drop(self.human_color)
-            QTimer.singleShot(1, lambda: self.trigger_ai.emit())  # hack: emit after updating piece color
+            self.dropped.emit(*piece.coordinate)
         else:
-            QMessageBox.warning(self, 'Invalid Position', 'This position has been taken!')
+            QMessageBox.warning(self, 'Invalid Position', 'This position has been occupied!')
 
-    def ai_play(self):
-        self.chessboard_panel.setEnabled(False)
+
+class Player:
+    def __init__(self, chessboard_data: np.ndarray, color: Color):
+        self.chessboard = chessboard_data
+        self.color = color
+
+    def play(self) -> (int, int):
+        raise NotImplementedError
+
+
+class AIPlayer(Player):
+    def __init__(self, chessboard_data: np.ndarray, color: Color, ai):
+        super().__init__(chessboard_data, color)
+        self.ai = ai
+
+    def play(self) -> (int, int):
         self.ai.go(self.chessboard)
-        # time.sleep(1)
-        new_row, new_col = self.ai.candidate_list[-1]
-        self.chessboard_pos[new_row][new_col].drop(Color(-self.human_color.value))
-        self.chessboard_panel.setEnabled(True)
+        return self.ai.candidate_list[-1]
+
+
+class HumanPlayer(Player):
+    def __init__(self, chessboard_data: np.ndarray, color: Color, board: ChessBoard):
+        super().__init__(chessboard_data, color)
+        self.board = board
+        self.choice = None
+
+    def play(self) -> (int, int):
+        loop = QEventLoop()
+        # don't change the order of connect, as slots are executed in the same order
+        self.board.dropped.connect(self._choose)
+        self.board.dropped.connect(loop.quit)
+        self.board.setEnabled(True)
+        loop.exec()  # block until the "dropped" signal is triggered
+        self.board.setEnabled(False)
+        self.board.dropped.disconnect()
+        return self.choice
+
+    def _choose(self, row, col):
+        self.choice = (row, col)
+
+
+class MainWindow(QWidget):
+    def __init__(self, size=15, parent=None):
+        super().__init__(parent=parent)
+        self.chessboard_data = np.zeros((size, size))
+        self.chessboard_panel = ChessBoard(self.chessboard_data)
+
+        self.start_btn = QPushButton('Start')
+        self.stop_btn = QPushButton('Stop')
+        self.start_btn.clicked.connect(self.start)
+        self.stop_btn.clicked.connect(self.stop)
+
+        self.setWindowTitle('Gomoku Desktop')
+        self.chessboard_panel.setEnabled(False)
+        layout = QVBoxLayout()
+        layout.addWidget(self.chessboard_panel)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addWidget(self.start_btn)
+        buttons_layout.addWidget(self.stop_btn)
+        layout.addLayout(buttons_layout)
+        self.setLayout(layout)
+        layout.setSizeConstraint(QLayout.SetFixedSize)
+
+        self.is_playing = False
+        self.players = {
+            Color.BLACK: HumanPlayer(self.chessboard_data, Color.BLACK, self.chessboard_panel),
+            # Color.BLACK: AIPlayer(self.chessboard_data, Color.BLACK, AI(size, Color.BLACK.value, 5)),
+            # Color.WHITE: HumanPlayer(self.chessboard_data, Color.WHITE, self.chessboard_panel)
+            Color.WHITE: AIPlayer(self.chessboard_data, Color.WHITE, AI(size, Color.WHITE.value, 5))
+        }
+        self.current_color = Color.BLACK
+
+    @property
+    def is_playing(self):
+        return self._is_playing
+
+    @is_playing.setter
+    def is_playing(self, val):
+        self._is_playing = val
+        self.start_btn.setDisabled(val)
+        self.stop_btn.setEnabled(val)
+
+    def start(self):
+        self.is_playing = True
+
+        # TODO: refactor with signals and slots to avoid non-zero exit value
+        while self.is_playing:
+            winner = self.check_winner()
+            if winner:
+                QMessageBox.information(self, 'Game Finished', f'Winner: {winner.name}')
+                self.is_playing = False
+                break
+            coordinate = self.players[self.current_color].play()
+            self.chessboard_panel.place(coordinate, self.current_color)
+            self.chessboard_data[coordinate] = self.current_color.value
+            self.current_color = Color(-self.current_color.value)
+
+    def stop(self):
+        self.is_playing = False
+        self.chessboard_panel.setEnabled(False)
+
+    def check_winner(self) -> Optional[Color]:
+        # TODO
+        return None
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format='[%(asctime)s %(levelname)s] %(message)s')
+    logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s %(levelname)s] %(message)s')
     app = QApplication(sys.argv)
-    app.setApplicationName('Gomoku Desktop')
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
