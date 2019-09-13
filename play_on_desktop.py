@@ -9,6 +9,7 @@ from PyQt5.QtCore import pyqtSignal, QEventLoop, QCoreApplication
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QMessageBox,
                              QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
 from typing import Optional, Tuple
+from scipy.signal import correlate
 
 
 class Color(Enum):
@@ -107,7 +108,7 @@ class HumanPlayer(Player):
 class MainWindow(QWidget):
     def __init__(self, size=15, parent=None):
         super().__init__(parent=parent)
-        self.chessboard_data = np.zeros((size, size))
+        self.chessboard_data = np.zeros((size, size), dtype=np.int8)
         self.chessboard_panel = ChessBoard(self.chessboard_data)
 
         self.start_btn = QPushButton('Start')
@@ -155,6 +156,10 @@ class MainWindow(QWidget):
                 QMessageBox.information(self, 'Game Finished', f'Winner: {winner.name}')
                 self.is_playing = False
                 break
+            elif np.sum(self.chessboard_data == 0) == 0:  # no empty position
+                QMessageBox.information(self, 'Game Finished', 'Draw')
+                self.is_playing = False
+                break
             coordinate = self.players[self.current_color].play()
             self.chessboard_panel.place(coordinate, self.current_color)
             self.chessboard_data[coordinate] = self.current_color.value
@@ -166,8 +171,22 @@ class MainWindow(QWidget):
 
     def check_winner(self) -> Optional[Color]:
         """:return: color of the winner. `None` if unfinished or for a draw"""
-        # TODO
-        return None
+        patterns = [
+            np.ones(5, dtype=np.int8).reshape(1, 5),
+            np.ones(5, dtype=np.int8).reshape(5, 1),
+            np.eye(5, dtype=np.int8),
+            np.fliplr(np.eye(5, dtype=np.int8))
+        ]
+        black = (self.chessboard_data == Color.BLACK.value).astype(np.int8)
+        white = (self.chessboard_data == Color.WHITE.value).astype(np.int8)
+        black_win = max([np.max(correlate(black, p, mode='same')) for p in patterns]) == 5
+        white_win = max([np.max(correlate(white, p, mode='same')) for p in patterns]) == 5
+        if black_win == white_win:  # draw
+            return None
+        elif black_win:
+            return Color.BLACK
+        else:  # white_win
+            return Color.WHITE
 
 
 def main():
