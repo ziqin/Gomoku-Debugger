@@ -16,9 +16,11 @@ Currently this project is feature-incomplete and probably bug-rich.
 
 ## Installation
 
+This program depends on Python 3.5+ and PyQt5. You can run the following commands to download the source code and install dependencies.
+
 ``` sh
 git clone https://github.com/ziqin/Gomoku-Debugger.git
-cd Gomoku-Debuger
+cd Gomoku-Debugger
 pip install -r requirements.txt
 ```
 

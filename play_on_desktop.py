@@ -5,10 +5,10 @@ import numpy as np
 import sys
 from enum import Enum
 from gomoku import AI
-from PyQt5.QtCore import pyqtSignal, QEventLoop, QCoreApplication, QTimer
+from PyQt5.QtCore import pyqtSignal, QEventLoop, QCoreApplication
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QMessageBox,
-                             QGroupBox, QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
-from typing import Optional
+                             QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
+from typing import Optional, Tuple
 
 
 class Color(Enum):
@@ -54,7 +54,7 @@ class ChessBoard(QWidget):
         self.setLayout(layout)
         layout.setSizeConstraint(QLayout.SetFixedSize)
 
-    def place(self, coordinate: (int, int), color: Color):
+    def place(self, coordinate: Tuple[int, int], color: Color):
         self.pieces[coordinate].drop(color)
 
     def _on_click(self, piece: ChessPiece):
@@ -69,7 +69,7 @@ class Player:
         self.chessboard = chessboard_data
         self.color = color
 
-    def play(self) -> (int, int):
+    def play(self) -> Tuple[int, int]:
         raise NotImplementedError
 
 
@@ -78,7 +78,7 @@ class AIPlayer(Player):
         super().__init__(chessboard_data, color)
         self.ai = ai
 
-    def play(self) -> (int, int):
+    def play(self) -> Tuple[int, int]:
         self.ai.go(self.chessboard)
         return self.ai.candidate_list[-1]
 
@@ -89,7 +89,7 @@ class HumanPlayer(Player):
         self.board = board
         self.choice = None
 
-    def play(self) -> (int, int):
+    def play(self) -> Tuple[int, int]:
         loop = QEventLoop()
         # don't change the order of connect, as slots are executed in the same order
         self.board.dropped.connect(self._choose)
@@ -165,6 +165,7 @@ class MainWindow(QWidget):
         self.chessboard_panel.setEnabled(False)
 
     def check_winner(self) -> Optional[Color]:
+        """:return: color of the winner. `None` if unfinished or for a draw"""
         # TODO
         return None
 
