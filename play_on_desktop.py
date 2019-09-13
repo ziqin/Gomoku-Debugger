@@ -3,7 +3,7 @@
 import logging
 import numpy as np
 import sys
-from enum import Enum
+from enum import IntEnum
 from gomoku import AI
 from PyQt5.QtCore import pyqtSignal, QEventLoop, QCoreApplication
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QMessageBox,
@@ -12,9 +12,9 @@ from typing import Optional, Tuple
 from scipy.signal import correlate
 
 
-class Color(Enum):
-    BLACK = 1
-    WHITE = -1
+class Color(IntEnum):
+    BLACK = -1
+    WHITE = 1
 
 
 class ChessPiece(QPushButton):
@@ -130,9 +130,9 @@ class MainWindow(QWidget):
         self.is_playing = False
         self.players = {
             Color.BLACK: HumanPlayer(self.chessboard_data, Color.BLACK, self.chessboard_panel),
-            # Color.BLACK: AIPlayer(self.chessboard_data, Color.BLACK, AI(size, Color.BLACK.value, 5)),
+            # Color.BLACK: AIPlayer(self.chessboard_data, Color.BLACK, AI(size, Color.BLACK, 5)),
             # Color.WHITE: HumanPlayer(self.chessboard_data, Color.WHITE, self.chessboard_panel)
-            Color.WHITE: AIPlayer(self.chessboard_data, Color.WHITE, AI(size, Color.WHITE.value, 5))
+            Color.WHITE: AIPlayer(self.chessboard_data, Color.WHITE, AI(size, Color.WHITE, 5))
         }
         self.current_color = Color.BLACK
 
@@ -162,8 +162,8 @@ class MainWindow(QWidget):
                 break
             coordinate = self.players[self.current_color].play()
             self.chessboard_panel.place(coordinate, self.current_color)
-            self.chessboard_data[coordinate] = self.current_color.value
-            self.current_color = Color(-self.current_color.value)
+            self.chessboard_data[coordinate] = self.current_color
+            self.current_color = Color(-self.current_color)
 
     def stop(self):
         self.is_playing = False
@@ -177,8 +177,8 @@ class MainWindow(QWidget):
             np.eye(5, dtype=np.int8),
             np.fliplr(np.eye(5, dtype=np.int8))
         ]
-        black = (self.chessboard_data == Color.BLACK.value).astype(np.int8)
-        white = (self.chessboard_data == Color.WHITE.value).astype(np.int8)
+        black = (self.chessboard_data == Color.BLACK).astype(np.int8)
+        white = (self.chessboard_data == Color.WHITE).astype(np.int8)
         black_win = max([np.max(correlate(black, p, mode='same')) for p in patterns]) == 5
         white_win = max([np.max(correlate(white, p, mode='same')) for p in patterns]) == 5
         if black_win == white_win:  # draw
