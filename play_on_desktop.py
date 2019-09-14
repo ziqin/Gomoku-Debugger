@@ -5,8 +5,8 @@ import numpy as np
 import sys
 from enum import IntEnum
 from gomoku import AI
-from PyQt5.QtCore import pyqtSignal, QEventLoop, QCoreApplication
-from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QMessageBox, QLabel,
+from PyQt5.QtCore import QCoreApplication, QObject, QEventLoop, pyqtSignal
+from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QLabel, QMessageBox,
                              QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
 from typing import Optional, Tuple
 from scipy.signal import correlate
@@ -68,35 +68,45 @@ class ChessBoard(QWidget):
             QMessageBox.warning(self, 'Invalid Position', 'This position has been occupied!')
 
 
-class Player:
-    def __init__(self, chessboard_data: np.ndarray, color: Color):
-        self.chessboard = chessboard_data
+class Player(QObject):
+    dropped = pyqtSignal(int, int)
+
+    def __init__(self, color: Color):
+        super().__init__()
+        self.chessboard = None
         self.color = color
 
-    def play(self) -> Tuple[int, int]:
+    def play(self, color: Color):
+        if color == self.color:
+            self.dropped.emit(*self._drop())
+
+    def _drop(self) -> Tuple[int, int]:
         raise NotImplementedError
+
+    def set_chessboard(self, chessboard_data: np.ndarray):
+        self.chessboard = chessboard_data
 
 
 class AIPlayer(Player):
-    def __init__(self, chessboard_data: np.ndarray, color: Color, ai):
-        super().__init__(chessboard_data, color)
+    def __init__(self, color: Color, ai):
+        super().__init__(color)
         self.ai = ai
 
-    def play(self) -> Tuple[int, int]:
+    def _drop(self) -> Tuple[int, int]:
         self.ai.go(self.chessboard)
         return self.ai.candidate_list[-1]
 
 
 class HumanPlayer(Player):
-    def __init__(self, chessboard_data: np.ndarray, color: Color, board: ChessBoard):
-        super().__init__(chessboard_data, color)
+    def __init__(self, color: Color, board: ChessBoard):
+        super().__init__(color)
         self.board = board
         self.choice = None
 
-    def play(self) -> Tuple[int, int]:
+    def _drop(self) -> Tuple[int, int]:
         loop = QEventLoop()
         # don't change the order of connect, as slots are executed in the same order
-        self.board.dropped.connect(self._choose)
+        self.board.dropped.connect(self.__choose)
         self.board.dropped.connect(loop.quit)
         self.board.setEnabled(True)
         loop.exec()  # block until the "dropped" signal is triggered
@@ -104,11 +114,13 @@ class HumanPlayer(Player):
         self.board.dropped.disconnect()
         return self.choice
 
-    def _choose(self, row, col):
+    def __choose(self, row, col):
         self.choice = (row, col)
 
 
 class MainWindow(QWidget):
+    drop = pyqtSignal(Color)
+
     def __init__(self, size=15, parent=None):
         super().__init__(parent=parent)
         self.chessboard_data = np.zeros((size, size), dtype=np.int8)
@@ -131,12 +143,7 @@ class MainWindow(QWidget):
         layout.setSizeConstraint(QLayout.SetFixedSize)
 
         self.is_playing = False
-        self.players = {
-            Color.BLACK: HumanPlayer(self.chessboard_data, Color.BLACK, self.chessboard_panel),
-            # Color.BLACK: AIPlayer(self.chessboard_data, Color.BLACK, AI(size, Color.BLACK, 5)),
-            # Color.WHITE: HumanPlayer(self.chessboard_data, Color.WHITE, self.chessboard_panel)
-            Color.WHITE: AIPlayer(self.chessboard_data, Color.WHITE, AI(size, Color.WHITE, 5))
-        }
+        self.players = {}
         self.current_color = Color.BLACK
 
     @property
@@ -149,30 +156,49 @@ class MainWindow(QWidget):
         self.start_btn.setDisabled(val)
         self.stop_btn.setEnabled(val)
 
+    def set_player(self, color: Color, player: Player):
+        player.set_chessboard(self.chessboard_data)
+        self.players[color] = player
+
     def start(self):
         self.is_playing = True
+        logging.info('Gomoku game starts')
+        for player in self.players.values():
+            self.drop.connect(player.play)
+            player.dropped.connect(self.receive)
+        self.judge()
+        self.next(self.is_playing)
 
-        # TODO: refactor with signals and slots to avoid non-zero exit value
-        while self.is_playing:
-            winner = self.check_winner()
-            if winner:
-                QMessageBox.information(self, 'Game Finished', f'Winner: {winner.name}')
-                self.is_playing = False
-                break
-            elif np.sum(self.chessboard_data == 0) == 0:  # no empty position
-                QMessageBox.information(self, 'Game Finished', 'Draw')
-                self.is_playing = False
-                break
-            coordinate = self.players[self.current_color].play()
-            self.chessboard_panel.place(coordinate, self.current_color)
-            self.chessboard_data[coordinate] = self.current_color
-            self.current_color = Color(-self.current_color)
+    def receive(self, row: int, col: int):
+        self.chessboard_panel.place((row, col), self.current_color)
+        self.chessboard_data[row, col] = self.current_color
+        self.judge()
+        self.current_color = Color(-self.current_color)
+        self.next(self.is_playing)
 
     def stop(self):
         self.is_playing = False
         self.chessboard_panel.setEnabled(False)
+        self.next(False)
 
-    def check_winner(self) -> Optional[Color]:
+    def next(self, playing: bool):
+        if playing:
+            self.drop.emit(self.current_color)
+        else:
+            for player in self.players.values():
+                self.drop.disconnect(player.play)
+                player.dropped.disconnect(self.receive)
+
+    def judge(self):
+        winner = self._check_winner()
+        if winner:
+            QMessageBox.information(self, 'Game Finished', f'Winner: {winner.name}')
+            self.is_playing = False
+        elif np.count_nonzero(self.chessboard_data == 0) == 0:  # no empty position
+            QMessageBox.information(self, 'Game Finished', 'Draw')
+            self.is_playing = False
+
+    def _check_winner(self) -> Optional[Color]:
         """:return: color of the winner. `None` if unfinished or for a draw"""
         patterns = [
             np.ones(5, dtype=np.int8).reshape(1, 5),
@@ -195,7 +221,10 @@ class MainWindow(QWidget):
 def main():
     logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s %(levelname)s] %(message)s')
     app = QApplication(sys.argv)
-    win = MainWindow()
+    chessboard_length = 15
+    win = MainWindow(chessboard_length)
+    win.set_player(Color.BLACK, HumanPlayer(Color.BLACK, win.chessboard_panel))
+    win.set_player(Color.WHITE, AIPlayer(Color.WHITE, AI(chessboard_length, Color.WHITE, -1)))
     win.show()
     sys.exit(app.exec())
 
