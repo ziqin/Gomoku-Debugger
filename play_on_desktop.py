@@ -6,7 +6,7 @@ import sys
 from enum import IntEnum
 from gomoku import AI
 from PyQt5.QtCore import pyqtSignal, QEventLoop, QCoreApplication
-from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QMessageBox,
+from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QMessageBox, QLabel,
                              QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
 from typing import Optional, Tuple
 from scipy.signal import correlate
@@ -47,11 +47,14 @@ class ChessBoard(QWidget):
         row, col = data.shape
         self.pieces = np.empty(data.shape, dtype=object)
         layout = QGridLayout()
+        for c in range(col):
+            layout.addWidget(QLabel('%3d' % c), 0, c+1)
         for r in range(row):
+            layout.addWidget(QLabel('%3d' % r), r+1, 0)
             for c in range(col):
                 this = self.pieces[r, c] = ChessPiece(r, c)
                 this.clicked.connect(lambda: self._on_click(self.sender()))
-                layout.addWidget(this, r, c)
+                layout.addWidget(this, r+1, c+1)
         self.setLayout(layout)
         layout.setSizeConstraint(QLayout.SetFixedSize)
 
