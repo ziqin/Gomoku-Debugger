@@ -5,11 +5,11 @@ import numpy as np
 import sys
 from enum import IntEnum
 from gomoku import AI
-from PyQt5.QtCore import QCoreApplication, QObject, QEventLoop, pyqtSignal
+from PyQt5.QtCore import QCoreApplication, QObject, pyqtSignal
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QLabel, QMessageBox,
                              QGridLayout, QLayout, QHBoxLayout, QVBoxLayout)
 from typing import Optional, Tuple
-from scipy.signal import correlate
+from scipy.signal import correlate2d as corr
 
 
 class Color(IntEnum):
@@ -71,51 +71,76 @@ class ChessBoard(QWidget):
 class Player(QObject):
     dropped = pyqtSignal(int, int)
 
-    def __init__(self, color: Color):
+    def __init__(self, color: Color, chessboard_data: np.ndarray = None):
         super().__init__()
         self.chessboard = None
         self.color = color
+        self.chessboard = chessboard_data
+
+    def set_chessboard(self, board: ChessBoard):
+        self.chessboard = board.data
 
     def play(self, color: Color):
-        if color == self.color:
-            self.dropped.emit(*self._drop())
-
-    def _drop(self) -> Tuple[int, int]:
+        """
+        Process if and only if color == self.color
+        Emit `dropped` signal when finished
+        """
         raise NotImplementedError
-
-    def set_chessboard(self, chessboard_data: np.ndarray):
-        self.chessboard = chessboard_data
 
 
 class AIPlayer(Player):
-    def __init__(self, color: Color, ai):
-        super().__init__(color)
+    def __init__(self, color: Color, ai, chessboard_data: np.ndarray = None):
+        super().__init__(color, chessboard_data)
         self.ai = ai
 
-    def _drop(self) -> Tuple[int, int]:
+    def play(self, color: Color):
+        if color != self.color:
+            return
         self.ai.go(self.chessboard)
-        return self.ai.candidate_list[-1]
+        self.dropped.emit(*self.ai.candidate_list[-1])
 
 
 class HumanPlayer(Player):
-    def __init__(self, color: Color, board: ChessBoard):
-        super().__init__(color)
+    def __init__(self, color: Color, board: ChessBoard = None, chessboard_data: np.ndarray = None):
+        super().__init__(color, chessboard_data)
         self.board = board
         self.choice = None
 
-    def _drop(self) -> Tuple[int, int]:
-        loop = QEventLoop()
-        # don't change the order of connect, as slots are executed in the same order
-        self.board.dropped.connect(self.__choose)
-        self.board.dropped.connect(loop.quit)
-        self.board.setEnabled(True)
-        loop.exec()  # block until the "dropped" signal is triggered
-        self.board.setEnabled(False)
-        self.board.dropped.disconnect()
-        return self.choice
+    def set_chessboard(self, board: ChessBoard):
+        super().set_chessboard(board)
+        self.board = board
 
-    def __choose(self, row, col):
-        self.choice = (row, col)
+    def play(self, color: Color):
+        if color != self.color:
+            return
+        self.board.dropped.connect(self.__receive)
+        self.board.setEnabled(True)
+
+    def __receive(self, row, col):
+        self.board.setEnabled(False)
+        self.board.dropped.disconnect(self.__receive)
+        self.dropped.emit(row, col)
+
+
+class HumanPresetPlayer(Player):
+    def __init__(self, color: Color, board: ChessBoard = None, chessboard_data: np.ndarray = None):
+        super().__init__(color, chessboard_data)
+        self.board = board
+        self.choice = None
+
+    def set_chessboard(self, board: ChessBoard):
+        super().set_chessboard(board)
+        self.board = board
+
+    def play(self, color: Color):
+        if color != self.color:
+            return
+        self.board.dropped.connect(self.__receive)
+        self.board.setEnabled(True)
+
+    def __receive(self, row, col):
+        self.board.dropped.disconnect(self.__receive)
+        self.dropped.emit(row, col)
 
 
 class MainWindow(QWidget):
@@ -126,8 +151,10 @@ class MainWindow(QWidget):
         self.chessboard_data = np.zeros((size, size), dtype=np.int8)
         self.chessboard_panel = ChessBoard(self.chessboard_data)
 
+        self.preset_btn = QPushButton('Preset')
         self.start_btn = QPushButton('Start')
         self.stop_btn = QPushButton('Stop')
+        self.preset_btn.clicked.connect(self.preset)
         self.start_btn.clicked.connect(self.start)
         self.stop_btn.clicked.connect(self.stop)
 
@@ -136,15 +163,46 @@ class MainWindow(QWidget):
         layout = QVBoxLayout()
         layout.addWidget(self.chessboard_panel)
         buttons_layout = QHBoxLayout()
+        buttons_layout.addWidget(self.preset_btn)
         buttons_layout.addWidget(self.start_btn)
         buttons_layout.addWidget(self.stop_btn)
         layout.addLayout(buttons_layout)
         self.setLayout(layout)
         layout.setSizeConstraint(QLayout.SetFixedSize)
 
-        self.is_playing = False
+        self.preset_players = []
         self.players = {}
         self.current_color = Color.BLACK
+
+        self._is_presetting = False
+        self._is_playing = False
+        self.preset_btn.setEnabled(True)
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+
+    def set_player(self, color: Color, player: Player):
+        player.set_chessboard(self.chessboard_panel)
+        self.players[color] = player
+
+    @property
+    def is_presetting(self):
+        return self._is_presetting
+
+    @is_presetting.setter
+    def is_presetting(self, val):
+        self._is_presetting = val
+        self.preset_btn.setDisabled(val)
+        self.start_btn.setEnabled(val)
+        if val:
+            for player in self.preset_players:
+                self.drop.connect(player.play)
+                player.dropped.connect(self.receive)
+            logging.debug('Preset connected')
+        else:
+            for player in self.preset_players:
+                self.drop.disconnect(player.play)
+                player.dropped.disconnect(self.receive)
+            logging.debug('Preset disconnected')
 
     @property
     def is_playing(self):
@@ -153,41 +211,53 @@ class MainWindow(QWidget):
     @is_playing.setter
     def is_playing(self, val):
         self._is_playing = val
+        self.preset_btn.setDisabled(val)
         self.start_btn.setDisabled(val)
         self.stop_btn.setEnabled(val)
+        if val:
+            for player in self.players.values():
+                self.drop.connect(player.play)
+                player.dropped.connect(self.receive)
+            logging.debug('Play connected')
+        else:
+            for player in self.players.values():
+                self.drop.disconnect(player.play)
+                player.dropped.disconnect(self.receive)
+            logging.debug('Play disconnected')
 
-    def set_player(self, color: Color, player: Player):
-        player.set_chessboard(self.chessboard_data)
-        self.players[color] = player
+    def preset(self):
+        self.preset_players = [
+            HumanPresetPlayer(Color.BLACK, self.chessboard_panel, self.chessboard_data),
+            HumanPresetPlayer(Color.WHITE, self.chessboard_panel, self.chessboard_data)
+        ]
+        self.is_presetting = True
+        self.next(self.is_presetting)
+        logging.info('Presetting composition')
 
     def start(self):
+        if self.is_presetting:
+            self.is_presetting = False
         self.is_playing = True
-        logging.info('Gomoku game starts')
-        for player in self.players.values():
-            self.drop.connect(player.play)
-            player.dropped.connect(self.receive)
+        logging.info('Game starts')
         self.judge()
         self.next(self.is_playing)
 
     def receive(self, row: int, col: int):
         self.chessboard_panel.place((row, col), self.current_color)
         self.chessboard_data[row, col] = self.current_color
-        self.judge()
+        if self.is_playing:
+            self.judge()
         self.current_color = Color(-self.current_color)
-        self.next(self.is_playing)
+        self.next(self.is_presetting or self.is_playing)
 
     def stop(self):
+        logging.info('Game stops')
         self.is_playing = False
         self.chessboard_panel.setEnabled(False)
-        self.next(False)
 
-    def next(self, playing: bool):
-        if playing:
+    def next(self, ok: bool):
+        if ok:
             self.drop.emit(self.current_color)
-        else:
-            for player in self.players.values():
-                self.drop.disconnect(player.play)
-                player.dropped.disconnect(self.receive)
 
     def judge(self):
         winner = self._check_winner()
@@ -208,8 +278,8 @@ class MainWindow(QWidget):
         ]
         black = (self.chessboard_data == Color.BLACK).astype(np.int8)
         white = (self.chessboard_data == Color.WHITE).astype(np.int8)
-        black_win = max([np.max(correlate(black, p, mode='same')) for p in patterns]) == 5
-        white_win = max([np.max(correlate(white, p, mode='same')) for p in patterns]) == 5
+        black_win = max([np.max(corr(black, p, mode='same')) for p in patterns]) == 5
+        white_win = max([np.max(corr(white, p, mode='same')) for p in patterns]) == 5
         if black_win == white_win:  # draw
             return None
         elif black_win:
@@ -223,7 +293,7 @@ def main():
     app = QApplication(sys.argv)
     chessboard_length = 15
     win = MainWindow(chessboard_length)
-    win.set_player(Color.BLACK, HumanPlayer(Color.BLACK, win.chessboard_panel))
+    win.set_player(Color.BLACK, HumanPlayer(Color.BLACK))
     win.set_player(Color.WHITE, AIPlayer(Color.WHITE, AI(chessboard_length, Color.WHITE, -1)))
     win.show()
     sys.exit(app.exec())

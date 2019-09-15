@@ -11,6 +11,7 @@ This GUI utility is created to ease the debug process of the Gomoku AI project. 
 - AI vs. Human
 - AI vs. AI
 - Human vs. Human
+- Start from a given composition
 
 Currently this project is feature-incomplete and probably bug-rich.
 
