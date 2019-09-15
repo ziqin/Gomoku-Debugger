@@ -1,4 +1,3 @@
 numpy
 PyQt5
 scipy
-timeout-decorator
