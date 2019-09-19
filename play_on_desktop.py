@@ -18,6 +18,8 @@ class Color(IntEnum):
 
 
 class ChessPiece(QPushButton):
+    num = 0
+
     def __init__(self, row: int, col: int, size=32):
         super().__init__()
         self.coordinate = (row, col)
@@ -29,7 +31,15 @@ class ChessPiece(QPushButton):
         assert self.color is None
         assert color in {Color.BLACK, Color.WHITE}
         self.color = color
-        self.setStyleSheet(f'background-color: {color.name.lower()}; border-radius: {self.width()/2}px;')
+        ChessPiece.num += 1
+        self.setText(str(ChessPiece.num))
+        self.setStyleSheet(f'''background-color: {color.name.lower()}; 
+                               border-radius: {self.width()/2}px;
+                               border-style: solid;
+                               border-width: 2px;
+                               border-color: gray;
+                               color: {'white' if color == Color.BLACK else 'black'}
+                               ''')
         logging.info(f'{color.name} {self.coordinate}')
         QCoreApplication.processEvents()  # refresh ui immediately
 
