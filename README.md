@@ -4,7 +4,7 @@
 
 Life is not easy, especially for SUSTech CS juniors taking CS303 (Artificial Intelligence).
 
-This GUI utility is created to ease the debug process of the Gomoku AI project. You can easily integrate it with your coursework and play with the AI written by yourself interactively.
+This GUI utility is created to ease the debug process of the Gomoku AI project. You can easily integrate it with your coursework and play interactively with the AI written by yourself.
 
 ## Features
 
